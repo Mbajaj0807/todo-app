@@ -9,7 +9,10 @@ function QrScanner({ onScan, onError, isActive }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [hasCamera, setHasCamera] = useState(true);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [zoomRange, setZoomRange] = useState({ min: 1, max: 1, step: 1 });
   const scanIntervalRef = useRef(null);
+  const streamRef = useRef(null);
 
   const startCamera = async () => {
     try {
@@ -21,11 +24,27 @@ function QrScanner({ onScan, onError, isActive }) {
         },
       });
 
+      streamRef.current = stream;
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.play();
 
         videoRef.current.onloadedmetadata = () => {
+          // Get camera track
+          const [track] = stream.getVideoTracks();
+          const capabilities = track.getCapabilities();
+
+          if (capabilities.zoom) {
+            setZoomRange({
+              min: capabilities.zoom.min,
+              max: capabilities.zoom.max,
+              step: capabilities.zoom.step || 1,
+            });
+            setZoomLevel(capabilities.zoom.min);
+            track.applyConstraints({ advanced: [{ zoom: capabilities.zoom.min }] });
+          }
+
           startScanning();
         };
       }
@@ -37,12 +56,10 @@ function QrScanner({ onScan, onError, isActive }) {
   };
 
   const stopCamera = () => {
-    if (videoRef.current?.srcObject) {
-      const tracks = videoRef.current.srcObject.getTracks();
-      tracks.forEach((track) => track.stop());
-      videoRef.current.srcObject = null;
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     }
-
     if (scanIntervalRef.current) {
       clearInterval(scanIntervalRef.current);
     }
@@ -74,6 +91,20 @@ function QrScanner({ onScan, onError, isActive }) {
         }
       }
     }, 300);
+  };
+
+  const handleZoomChange = async (e) => {
+    const newZoom = Number(e.target.value);
+    setZoomLevel(newZoom);
+
+    if (streamRef.current) {
+      const [track] = streamRef.current.getVideoTracks();
+      try {
+        await track.applyConstraints({ advanced: [{ zoom: newZoom }] });
+      } catch (err) {
+        console.warn("Zoom not supported:", err);
+      }
+    }
   };
 
   useEffect(() => {
@@ -114,25 +145,44 @@ function QrScanner({ onScan, onError, isActive }) {
   }
 
   return (
-    <div
-      style={{
-        position: "relative",
-        borderRadius: "12px",
-        overflow: "hidden",
-        background: "#000",
-      }}
-    >
-      <video
-        ref={videoRef}
+    <div>
+      <div
         style={{
-          width: "100%",
-          height: "300px",
-          objectFit: "cover",
+          position: "relative",
+          borderRadius: "12px",
+          overflow: "hidden",
+          background: "#000",
         }}
-        playsInline
-        muted
-      />
-      <canvas ref={canvasRef} style={{ display: "none" }} />
+      >
+        <video
+          ref={videoRef}
+          style={{
+            width: "100%",
+            height: "300px",
+            objectFit: "cover",
+          }}
+          playsInline
+          muted
+        />
+        <canvas ref={canvasRef} style={{ display: "none" }} />
+      </div>
+
+      {/* Zoom Slider */}
+      {zoomRange.max > zoomRange.min && (
+        <div style={{ marginTop: "1rem", textAlign: "center" }}>
+          <label style={{ fontSize: "0.9rem", marginRight: "0.5rem" }}>
+            Zoom:
+          </label>
+          <input
+            type="range"
+            min={zoomRange.min}
+            max={zoomRange.max}
+            step={zoomRange.step}
+            value={zoomLevel}
+            onChange={handleZoomChange}
+          />
+        </div>
+      )}
     </div>
   );
 }
